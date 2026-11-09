@@ -222,3 +222,29 @@ impl<R: Renderer> Instantiate for Box<dyn Scene<R>> {
             })
     }
 }
+
+#[cfg(all(test, feature = "vello"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settled_state_machine_draws_into_a_new_renderer_after_resize() {
+        let file = crate::File::new(include_bytes!("../../assets/rating-animation.riv")).unwrap();
+        let artboard = crate::Artboard::instantiate(&file, Handle::Default).unwrap();
+        let mut scene = crate::StateMachine::instantiate(&artboard, Handle::Default).unwrap();
+        let settled = (0..120).any(|_| !scene.advance_and_apply(Duration::from_secs(1)));
+        assert!(
+            settled,
+            "fixture state machine must reach its resting state"
+        );
+
+        let mut viewport = Viewport::default();
+        for size in [128, 256] {
+            viewport.resize(size, size);
+            let mut renderer = crate::vello::Renderer::default();
+            assert!(scene.advance_and_maybe_draw(&mut renderer, Duration::ZERO, &mut viewport));
+            assert!(!renderer.scene().encoding().is_empty());
+            assert_eq!(renderer.scene().encoding().n_open_clips, 0);
+        }
+    }
+}

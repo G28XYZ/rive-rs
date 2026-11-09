@@ -72,6 +72,9 @@ fn main() {
 
         if target.contains("apple") && profile.contains("release") {
             cfg.define("HAVE_CORETEXT", "1");
+            println!("cargo:rustc-link-lib=framework=CoreText");
+            println!("cargo:rustc-link-lib=framework=CoreGraphics");
+            println!("cargo:rustc-link-lib=framework=CoreFoundation");
         }
 
         if target.contains("windows") {

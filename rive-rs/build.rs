@@ -20,10 +20,22 @@ fn all_files_with_extension<P: AsRef<Path>>(
 
 fn main() {
     println!("cargo:rerun-if-changed=src/ffi.cpp");
+    println!("cargo:rerun-if-env-changed=RIVE_CPP_PATH");
+    println!("cargo:rerun-if-changed=../submodules/harfbuzz/src");
+    println!("cargo:rerun-if-changed=../submodules/SheenBidi/Source");
 
     let rive_cpp_path = env::var("RIVE_CPP_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("../submodules/rive-cpp"));
+
+    println!(
+        "cargo:rerun-if-changed={}",
+        rive_cpp_path.join("src").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        rive_cpp_path.join("include").display()
+    );
 
     cc::Build::new()
         .cpp(true)

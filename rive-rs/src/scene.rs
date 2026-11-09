@@ -191,9 +191,9 @@ macro_rules! impl_scene {
 
                 viewport.inverse_view_transform = inverse_view_transform;
 
-                if !self.advance_and_apply(elapsed) {
-                    return false;
-                }
+                // A settled state machine still needs drawing after target resize,
+                // asset extraction, or GPU texture recreation.
+                self.advance_and_apply(elapsed);
 
                 renderer.state_push();
                 renderer.transform(&view_transform);

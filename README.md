@@ -1,3 +1,16 @@
+# Bevy 0.19 companion fork
+
+Branch `bevy-0.19` updates the Vello backend to 0.10 (wgpu 29), removes its
+self-referential scene builder, and aligns HarfBuzz with the pinned Rive C++
+runtime (`rive_10.1.0`). It is used by [G28XYZ/rive-bevy](https://github.com/G28XYZ/rive-bevy/tree/bevy-0.19).
+
+Clone with `--recursive`, or run `git submodule update --init --recursive`.
+Build this package with `cargo check -p rive-rs --no-default-features --features vello,text`.
+The upstream workspace demos still use the old Vello API and are not ported.
+Text is enabled by default; layout is no longer a default feature because the
+upstream Yoga submodule is missing. Newer Rive features are not added by this port.
+The C++ runtime revision is unchanged.
+
 ![CI](https://github.com/rive-app/rive-rs/actions/workflows/ci.yml/badge.svg)
 ![Discord badge](https://img.shields.io/discord/532365473602600965)
 ![Twitter handle](https://img.shields.io/twitter/follow/rive_app.svg?style=social&label=Follow)

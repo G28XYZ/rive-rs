@@ -1,0 +1,17 @@
+name: Vello 0.10 runtime
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --package rive-rs --check
+      - run: cargo check --package rive-rs --no-default-features --features vello,text
+      - run: cargo test --package rive-rs --no-default-features --features vello,text --lib
+      - run: cargo test --package rive-rs --no-default-features --features vello,text --doc

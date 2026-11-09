@@ -1,14 +1,13 @@
 use std::{fmt, io::Cursor};
 
 use image::io::Reader;
-use smallvec::SmallVec;
 use vello::{
-    kurbo::{Affine, BezPath, Line, PathSeg, Point, Rect, Shape, Vec2},
+    kurbo::{Affine, BezPath, Cap, Join, Line, PathSeg, Point, Rect, Shape, Stroke, Vec2},
     peniko::{
-        self, BlendMode, Brush, BrushRef, Cap, Color, ColorStop, ColorStopsSource, Fill, Format,
-        Join, Mix, Stroke,
+        self, BlendMode, Brush, BrushRef, Color, ColorStop, ColorStopsSource, Fill, ImageFormat,
+        Mix,
     },
-    SceneBuilder, SceneFragment,
+    Scene,
 };
 
 mod util;
@@ -18,7 +17,7 @@ use util::ScaleFromOrigin;
 use crate::renderer;
 
 fn to_vello_color(color: renderer::Color) -> Color {
-    Color::rgba8(color.r, color.g, color.b, color.a)
+    Color::from_rgba8(color.r, color.g, color.b, color.a)
 }
 
 fn to_vello_mix(blend_mode: renderer::BlendMode) -> Mix {
@@ -185,14 +184,14 @@ struct SliceStops<'s> {
 }
 
 impl ColorStopsSource for SliceStops<'_> {
-    fn collect_stops(&self, vec: &mut SmallVec<[ColorStop; 4]>) {
+    fn collect_stops(self, vec: &mut peniko::ColorStops) {
         vec.extend(
             self.colors
                 .iter()
                 .zip(self.stops.iter())
                 .map(|(&color, &offset)| ColorStop {
                     offset,
-                    color: to_vello_color(color),
+                    color: to_vello_color(color).into(),
                 }),
         );
     }
@@ -242,7 +241,7 @@ impl renderer::Paint for Paint {
     fn set_thickness(&mut self, thickness: f32) {
         loop {
             if let RenderStyle::Stroke(stroke) = &mut self.style {
-                stroke.width = thickness;
+                stroke.width = thickness as f64;
                 break;
             } else {
                 self.style = RenderStyle::Stroke(Stroke::new(0.0));
@@ -336,7 +335,7 @@ impl renderer::Gradient for Gradient {
 
 #[derive(Debug)]
 pub struct Image {
-    inner: peniko::Image,
+    inner: peniko::ImageData,
 }
 
 impl renderer::Image for Image {
@@ -351,25 +350,30 @@ impl renderer::Image for Image {
         let height = image.height();
 
         Some(Image {
-            inner: peniko::Image::new(image.into_raw().into(), Format::Rgba8, width, height),
+            inner: peniko::ImageData {
+                data: image.into_raw().into(),
+                format: ImageFormat::Rgba8,
+                alpha_type: peniko::ImageAlphaType::Alpha,
+                width,
+                height,
+            },
         })
     }
 }
 
 pub struct Renderer {
-    scene: Box<SceneFragment>,
-    builder: SceneBuilder<'static>,
+    scene: Scene,
     transforms: Vec<Affine>,
     clips: Vec<bool>,
 }
 
 impl Renderer {
-    pub fn scene(&self) -> &SceneFragment {
+    pub fn scene(&self) -> &Scene {
         &self.scene
     }
 
-    pub fn into_scene(self) -> SceneFragment {
-        *self.scene
+    pub fn into_scene(self) -> Scene {
+        self.scene
     }
 
     fn last_transform(&mut self) -> &mut Affine {
@@ -384,19 +388,8 @@ impl Renderer {
 impl Default for Renderer {
     #[inline]
     fn default() -> Self {
-        let mut scene = Box::<SceneFragment>::default();
-        let builder = {
-            let scene_mut: &mut SceneFragment = &mut scene;
-            SceneBuilder::for_fragment(unsafe {
-                // Quite a hack until we have a better way to do this in Vello.
-                // Pretend that the scene fragment pointer lives for 'static.
-                std::mem::transmute::<&mut SceneFragment, &'static mut SceneFragment>(scene_mut)
-            })
-        };
-
         Self {
-            scene,
-            builder,
+            scene: Scene::new(),
             transforms: vec![Affine::IDENTITY],
             clips: vec![false],
         }
@@ -426,7 +419,7 @@ impl renderer::Renderer for Renderer {
     fn state_pop(&mut self) {
         self.transforms.pop();
         if self.clips.pop().unwrap_or_default() {
-            self.builder.pop_layer();
+            self.scene.pop_layer();
         }
 
         if self.transforms.is_empty() {
@@ -446,11 +439,11 @@ impl renderer::Renderer for Renderer {
         let transform = *self.last_transform();
 
         if *self.last_clip() {
-            self.builder.pop_layer();
+            self.scene.pop_layer();
         }
 
-        self.builder
-            .push_layer(Mix::Clip, 1.0, transform, &path.inner);
+        self.scene
+            .push_clip_layer(path.fill, transform, &path.inner);
 
         *self.last_clip() = true;
     }
@@ -459,12 +452,18 @@ impl renderer::Renderer for Renderer {
     fn draw_path(&mut self, path: &Self::Path, paint: &Self::Paint) {
         let transform = *self.last_transform();
 
-        let builder = &mut self.builder;
+        let builder = &mut self.scene;
 
         let skip_blending = paint.blend_mode == Mix::Normal.into();
 
         if !skip_blending {
-            builder.push_layer(paint.blend_mode, 1.0, transform, &path.inner.bounding_box());
+            builder.push_layer(
+                Fill::NonZero,
+                paint.blend_mode,
+                1.0,
+                transform,
+                &path.inner.bounding_box(),
+            );
         }
 
         match &paint.style {
@@ -492,17 +491,17 @@ impl renderer::Renderer for Renderer {
         ));
         let rect = Rect::new(0.0, 0.0, image.width as f64, image.height as f64);
 
-        let builder = &mut self.builder;
+        let builder = &mut self.scene;
 
         let skip_blending = mix == Mix::Normal && opacity == 1.0;
 
-        if skip_blending {
-            builder.push_layer(mix, opacity, transform, &rect);
+        if !skip_blending {
+            builder.push_layer(Fill::NonZero, mix, opacity, transform, &rect);
         }
 
         builder.draw_image(image, transform);
 
-        if skip_blending {
+        if !skip_blending {
             builder.pop_layer();
         }
     }
@@ -546,18 +545,18 @@ impl renderer::Renderer for Renderer {
             let brush_transform =
                 util::map_uvs_to_triangle(&points, &uvs, image.width, image.height);
 
-            let builder = &mut self.builder;
+            let builder = &mut self.scene;
 
-            let skip_blending = mix == Mix::Normal;
+            let skip_blending = mix == Mix::Normal && opacity == 1.0;
 
             if !skip_blending {
-                builder.push_layer(mix, opacity, transform, &path.bounding_box());
+                builder.push_layer(Fill::NonZero, mix, opacity, transform, &path.bounding_box());
             }
 
             builder.fill(
                 Fill::NonZero,
                 transform,
-                BrushRef::Image(image),
+                BrushRef::Image(image.into()),
                 Some(brush_transform),
                 &path,
             );
